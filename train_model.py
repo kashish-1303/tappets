@@ -212,6 +212,7 @@ def train_model(model, train_loader, test_loader, criterion, optimizer,
     val_losses = []
     train_accs = []
     val_accs = []
+    epoch_times = []
     
     # Start training
     start_time = time.time()
@@ -219,6 +220,7 @@ def train_model(model, train_loader, test_loader, criterion, optimizer,
     for epoch in range(num_epochs):
         print(f"Epoch {epoch+1}/{num_epochs}")
         print('-' * 10)
+        epoch_start_time = time.time()
         
         # Train for one epoch
         train_loss = train_epoch(model, train_loader, criterion, optimizer, device)
@@ -238,6 +240,9 @@ def train_model(model, train_loader, test_loader, criterion, optimizer,
                 all_train_labels.extend(labels.numpy())
         
         train_acc = accuracy_score(all_train_labels, all_train_preds)
+        epoch_time = time.time() - epoch_start_time
+        epoch_times.append(epoch_time)
+        print(f"Epoch completed in {epoch_time:.2f} seconds")
         
         # Update learning rate
         scheduler.step(val_loss)
@@ -315,6 +320,7 @@ def train_model(model, train_loader, test_loader, criterion, optimizer,
         'val_losses': val_losses,
         'train_accs': train_accs,
         'val_accs': val_accs,
+        'epoch_times': epoch_times,
         'final_metrics': {
             'accuracy': final_acc,
             'precision': precision,
@@ -322,5 +328,9 @@ def train_model(model, train_loader, test_loader, criterion, optimizer,
             'f1_score': f1
         }
     }
-    
+    print("\nEpoch Time Summary:")
+    for i, epoch_time in enumerate(epoch_times):
+        print(f"Epoch {i+1}: {epoch_time:.2f} seconds")
+    print(f"Average epoch time: {sum(epoch_times)/len(epoch_times):.2f} seconds")
+        
     return model, history
