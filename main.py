@@ -7,7 +7,8 @@ import matplotlib.pyplot as plt
 from torchvision import models
 import torch.nn as nn
 import torch.optim as optim
-import time 
+import time
+import platform
 # Import custom modules
 from preprocess_audio import batch_process_audio_files
 from image_encoding import batch_encode_time_series
@@ -24,6 +25,7 @@ def parse_arguments():
                         help='Operation mode: preprocess audio, encode time series, train model, evaluate model, visualize with GradCAM, or run all steps')
     parser.add_argument('--gpu', type=int, default=0, help='GPU ID to use (use -1 for CPU)')
     parser.add_argument('--seed', type=int, default=42, help='Random seed for reproducibility')
+    parser.add_argument('--use_mps', action='store_true', help='Use Apple Silicon GPU via MPS backend')
     
     # Data paths
     parser.add_argument('--normal_audio', type=str, default='data/normal', help='Path to normal audio files')
@@ -65,20 +67,41 @@ def parse_arguments():
 def set_seed(seed):
     """Set random seed for reproducibility"""
     torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
     np.random.seed(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+    
+    # Set CUDA seeds if available
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+    
+    # MPS doesn't have specific seeding requirements like CUDA
+    # But we do want to ensure PyTorch operations are deterministic when possible
 
-def get_device(gpu):
+def get_device(gpu, use_mps=False):
     """Get the device to use"""
+    # Auto-detect Apple Silicon and use MPS if available
+    is_apple_silicon = (
+        platform.system() == 'Darwin' and 
+        platform.machine().startswith('arm')
+    )
+    
+    # Check for MPS (Apple Silicon) 
+    if (use_mps or is_apple_silicon) and hasattr(torch, 'backends') and hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+        device = torch.device('mps')
+        print("Using Apple Silicon GPU via MPS")
+        return device
+    
+    # Fall back to CUDA if specified and available
     if gpu >= 0 and torch.cuda.is_available():
         device = torch.device(f'cuda:{gpu}')
-        print(f"Using GPU: {torch.cuda.get_device_name(gpu)}")
-    else:
-        device = torch.device('cpu')
-        print("Using CPU")
+        print(f"Using NVIDIA GPU: {torch.cuda.get_device_name(gpu)}")
+        return device
+    
+    # Otherwise use CPU
+    device = torch.device('cpu')
+    print("Using CPU")
     return device
 
 def preprocess_data(args):
@@ -131,6 +154,47 @@ def encode_data(args):
     
     print("Encoding complete.")
 
+def load_model(model_path, model_name, device):
+    """Load model with device compatibility"""
+    model = create_model(
+        model_name=model_name,
+        num_classes=2,
+        pretrained=False
+    )
+    
+    # Handle different device maps
+    if device.type == 'mps':
+        # For MPS devices, load to CPU first then move to MPS
+        checkpoint = torch.load(model_path, map_location='cpu')
+        model.load_state_dict(checkpoint['model_state_dict'])
+        model = model.to(device)
+    else:
+        # For other devices (CPU, CUDA)
+        checkpoint = torch.load(model_path, map_location=device)
+        model.load_state_dict(checkpoint['model_state_dict'])
+        model = model.to(device)
+        
+    return model, checkpoint
+
+def save_model(model, optimizer, epoch, loss, accuracy, save_path):
+    """Save model with device compatibility"""
+    # Move model to CPU before saving to ensure compatibility
+    model_cpu = model.to('cpu')
+    
+    # Save the model
+    torch.save({
+        'epoch': epoch,
+        'model_state_dict': model_cpu.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'loss': loss,
+        'accuracy': accuracy
+    }, save_path)
+    
+    # Move model back to original device
+    model_cpu = None  # Clear from memory
+    device = next(model.parameters()).device  # Get original device
+    model = model.to(device)  # Return to original device
+
 def train(args, device):
     """Train the model"""
     print("\n=== Model Training ===")
@@ -173,27 +237,114 @@ def train(args, device):
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='min', factor=0.1, patience=3, verbose=True
+        optimizer, mode='min', factor=0.1, patience=3
     )
     
     # Train the model
     print("Starting training...")
-    model, history = train_model(
-        model=model,
-        train_loader=train_loader,
-        test_loader=test_loader,
-        criterion=criterion,
-        optimizer=optimizer,
-        scheduler=scheduler,
-        device=device,
-        num_epochs=args.num_epochs,
-        patience=args.early_stopping,
-        save_dir=model_save_dir,
-        model_name=full_model_name,
-        
-    )
     
-    print(f"Training complete. Model saved to {model_save_dir}")
+    # Modify train_model to use our save_model function
+    best_model_path = os.path.join(model_save_dir, f"{full_model_name}_best.pth")
+    best_acc = 0.0
+    patience_counter = 0
+    history = {'train_loss': [], 'train_acc': [], 'val_loss': [], 'val_acc': []}
+    
+    for epoch in range(args.num_epochs):
+        print(f"Epoch {epoch+1}/{args.num_epochs}")
+        print('-' * 10)
+        
+        # Train phase
+        model.train()
+        running_loss = 0.0
+        running_corrects = 0
+        total = 0
+        
+        for inputs, labels in train_loader:
+            inputs = inputs.to(device)
+            labels = labels.to(device)
+            
+            # Zero the parameter gradients
+            optimizer.zero_grad()
+            
+            # Forward pass
+            with torch.set_grad_enabled(True):
+                outputs = model(inputs)
+                _, preds = torch.max(outputs, 1)
+                loss = criterion(outputs, labels)
+                
+                # Backward pass and optimize
+                loss.backward()
+                optimizer.step()
+            
+            # Statistics
+            running_loss += loss.item() * inputs.size(0)
+            running_corrects += torch.sum(preds == labels.data)
+            total += labels.size(0)
+        
+        epoch_loss = running_loss / total
+        epoch_acc = running_corrects.double() / total
+        
+        print(f"Train Loss: {epoch_loss:.4f} Acc: {epoch_acc:.4f}")
+        
+        history['train_loss'].append(epoch_loss)
+        history['train_acc'].append(epoch_acc.item())
+        
+        # Validation phase
+        val_loss, val_acc, _, _ = validate(model, test_loader, criterion, device)
+        
+        history['val_loss'].append(val_loss)
+        history['val_acc'].append(val_acc)
+        
+        print(f"Val Loss: {val_loss:.4f} Acc: {val_acc:.4f}")
+        
+        # Update scheduler
+        scheduler.step(val_loss)
+        
+        # Save model checkpoint
+        checkpoint_path = os.path.join(model_save_dir, f"{full_model_name}_epoch{epoch+1}.pth")
+        save_model(model, optimizer, epoch, val_loss, val_acc, checkpoint_path)
+        
+        # Check if this is the best model
+        if val_acc > best_acc:
+            best_acc = val_acc
+            save_model(model, optimizer, epoch, val_loss, val_acc, best_model_path)
+            patience_counter = 0
+        else:
+            patience_counter += 1
+            
+        # Early stopping
+        if patience_counter >= args.early_stopping:
+            print(f"Early stopping triggered after epoch {epoch+1}")
+            break
+    
+    print(f"Best validation accuracy: {best_acc:.4f}")
+    
+    # Load best model for evaluation
+    model, _ = load_model(best_model_path, args.model_name, device)
+    
+    # Plot training history
+    plt.figure(figsize=(12, 4))
+    
+    plt.subplot(1, 2, 1)
+    plt.plot(history['train_loss'], label='Train')
+    plt.plot(history['val_loss'], label='Validation')
+    plt.title('Loss')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.legend()
+    
+    plt.subplot(1, 2, 2)
+    plt.plot(history['train_acc'], label='Train')
+    plt.plot(history['val_acc'], label='Validation')
+    plt.title('Accuracy')
+    plt.xlabel('Epoch')
+    plt.ylabel('Accuracy')
+    plt.legend()
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join(model_save_dir, f"{full_model_name}_history.png"))
+    plt.close()
+    
     return model, test_loader, history
 
 def evaluate(args, device, model=None, test_loader=None):
@@ -209,17 +360,9 @@ def evaluate(args, device, model=None, test_loader=None):
         else:
             model_path = args.model_path
         
-        # Load model
+        # Load model using our custom function
         print(f"Loading model from {model_path}...")
-        model = create_model(
-            model_name=args.model_name,
-            num_classes=2,
-            pretrained=False
-        )
-        
-        checkpoint = torch.load(model_path, map_location=device)
-        model.load_state_dict(checkpoint['model_state_dict'])
-        model = model.to(device)
+        model, _ = load_model(model_path, args.model_name, device)
     
     # Create test data loader if not provided
     if test_loader is None:
@@ -275,17 +418,9 @@ def visualize(args, device, model=None):
         else:
             model_path = args.model_path
         
-        # Load model
+        # Load model using our custom function
         print(f"Loading model from {model_path}...")
-        model = create_model(
-            model_name=args.model_name,
-            num_classes=2,
-            pretrained=False
-        )
-        
-        checkpoint = torch.load(model_path, map_location=device)
-        model.load_state_dict(checkpoint['model_state_dict'])
-        model = model.to(device)
+        model, _ = load_model(model_path, args.model_name, device)
     
     # Define output directory for visualizations
     vis_dir = os.path.join(args.vis_dir, f"{args.model_name}_{args.encoding_method}")
@@ -296,28 +431,44 @@ def visualize(args, device, model=None):
     normal_vis_dir = os.path.join(vis_dir, "normal")
     os.makedirs(normal_vis_dir, exist_ok=True)
     
-    batch_visualize_grad_cam(
-        model=model,
-        image_dir=args.encoded_normal,
-        output_dir=normal_vis_dir,
-        pattern=f"*_{args.encoding_method}.png",
-        target_layer_name="layer4",
-        show=False
-    )
+    # For MPS compatibility in GradCAM - handle case where we need to move to CPU
+    # MPS has limited support for some operations needed by GradCAM
+    original_device = device
+    if device.type == 'mps':
+        # Temporarily move to CPU only for GradCAM if using MPS
+        print("Temporarily moving model to CPU for GradCAM compatibility")
+        model = model.to('cpu')
+        device = torch.device('cpu')
     
-    # Generate GradCAM visualizations for anomaly samples
-    print("Generating GradCAM visualizations for anomaly samples...")
-    anomaly_vis_dir = os.path.join(vis_dir, "anomaly")
-    os.makedirs(anomaly_vis_dir, exist_ok=True)
-    
-    batch_visualize_grad_cam(
-        model=model,
-        image_dir=args.encoded_anomaly,
-        output_dir=anomaly_vis_dir,
-        pattern=f"*_{args.encoding_method}.png",
-        target_layer_name="layer4",
-        show=False
-    )
+    try:
+        batch_visualize_grad_cam(
+            model=model,
+            image_dir=args.encoded_normal,
+            output_dir=normal_vis_dir,
+            pattern=f"*_{args.encoding_method}.png",
+            target_layer_name="layer4",
+            show=False,
+            device=device  # Pass device explicitly
+        )
+        
+        # Generate GradCAM visualizations for anomaly samples
+        print("Generating GradCAM visualizations for anomaly samples...")
+        anomaly_vis_dir = os.path.join(vis_dir, "anomaly")
+        os.makedirs(anomaly_vis_dir, exist_ok=True)
+        
+        batch_visualize_grad_cam(
+            model=model,
+            image_dir=args.encoded_anomaly,
+            output_dir=anomaly_vis_dir,
+            pattern=f"*_{args.encoding_method}.png",
+            target_layer_name="layer4",
+            show=False,
+            device=device  # Pass device explicitly
+        )
+    finally:
+        # Move model back to MPS if needed
+        if original_device.type == 'mps':
+            model = model.to(original_device)
     
     print(f"Visualization complete. Results saved to {vis_dir}")
 
@@ -329,12 +480,25 @@ def main():
     # Set random seed for reproducibility
     set_seed(args.seed)
     
-    # Get device
-    device = get_device(args.gpu)
+    # Get device - pass the use_mps flag to prioritize MPS backend
+    device = get_device(args.gpu, use_mps=args.use_mps)
     
     # Create directories
     os.makedirs(args.model_dir, exist_ok=True)
     os.makedirs(args.vis_dir, exist_ok=True)
+    
+    # Print system info
+    print("\n=== System Information ===")
+    print(f"PyTorch version: {torch.__version__}")
+    print(f"System: {platform.system()} {platform.release()} on {platform.machine()}")
+    print(f"Python version: {platform.python_version()}")
+    print(f"CUDA available: {torch.cuda.is_available()}")
+    if hasattr(torch, 'backends') and hasattr(torch.backends, 'mps'):
+        print(f"MPS available: {torch.backends.mps.is_available()}")
+    else:
+        print("MPS backend not available in this PyTorch version")
+    print(f"Using device: {device}")
+    print("=" * 30)
     
     # Run the requested operation
     if args.mode == 'preprocess' or args.mode == 'all':
