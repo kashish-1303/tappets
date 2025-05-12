@@ -37,7 +37,6 @@ def create_model(model_name='resnet50', num_classes=2, pretrained=True):
     
     return model
 
-
 def train_epoch(model, dataloader, criterion, optimizer, device):
     """
     Train the model for one epoch
@@ -98,6 +97,11 @@ def validate(model, dataloader, criterion, device):
     Returns:
         tuple: (validation loss, accuracy, predictions, labels)
     """
+    # Verify model is on correct device before validation
+    if next(model.parameters()).device != device:
+        print(f"Warning: Model not on {device} during validation, moving now")
+        model = model.to(device)
+        
     model.eval()
     running_loss = 0.0
     all_preds = []
@@ -201,7 +205,6 @@ def plot_confusion_matrix(y_true, y_pred, save_path=None):
         plt.savefig(save_path)
     
     plt.show()
-
 
 def train_model(model, train_loader, test_loader, criterion, optimizer, 
                scheduler, device, num_epochs=20, patience=5, 
