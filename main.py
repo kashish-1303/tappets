@@ -1,3 +1,5 @@
+
+
 #!/usr/bin/env python3
 import os
 import argparse
@@ -154,6 +156,26 @@ def encode_data(args):
     
     print("Encoding complete.")
 
+def save_model(model, optimizer, epoch, loss, accuracy, save_path):
+    """Save model with device compatibility"""
+    # Get device of the model
+    device = next(model.parameters()).device
+    
+    # Move model to CPU before saving to avoid MPS-related issues
+    model = model.to('cpu')
+    
+    # Save the model
+    torch.save({
+        'epoch': epoch,
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'loss': loss,
+        'accuracy': accuracy
+    }, save_path)
+    
+    # Move model back to original device
+    model = model.to(device)
+
 def load_model(model_path, model_name, device):
     """Load model with device compatibility"""
     model = create_model(
@@ -162,38 +184,21 @@ def load_model(model_path, model_name, device):
         pretrained=False
     )
     
-    # Handle different device maps
-    if device.type == 'mps':
-        # For MPS devices, load to CPU first then move to MPS
-        checkpoint = torch.load(model_path, map_location='cpu')
-        model.load_state_dict(checkpoint['model_state_dict'])
-        model = model.to(device)
-    else:
-        # For other devices (CPU, CUDA)
-        checkpoint = torch.load(model_path, map_location=device)
-        model.load_state_dict(checkpoint['model_state_dict'])
-        model = model.to(device)
-        
+    # Always load checkpoint to CPU first
+    checkpoint = torch.load(model_path, map_location='cpu')
+    
+    # Load state dict
+    model.load_state_dict(checkpoint['model_state_dict'])
+    
+    # Then move to target device
+    model = model.to(device)
+    
+    # Make sure all buffers and parameters are on the right device
+    for param in model.parameters():
+        if param.device != device:
+            raise RuntimeError(f"Parameter not on correct device: {param.device} vs expected {device}")
+    
     return model, checkpoint
-
-def save_model(model, optimizer, epoch, loss, accuracy, save_path):
-    """Save model with device compatibility"""
-    # Move model to CPU before saving to ensure compatibility
-    model_cpu = model.to('cpu')
-    
-    # Save the model
-    torch.save({
-        'epoch': epoch,
-        'model_state_dict': model_cpu.state_dict(),
-        'optimizer_state_dict': optimizer.state_dict(),
-        'loss': loss,
-        'accuracy': accuracy
-    }, save_path)
-    
-    # Move model back to original device
-    model_cpu = None  # Clear from memory
-    device = next(model.parameters()).device  # Get original device
-    model = model.to(device)  # Return to original device
 
 def train(args, device):
     """Train the model"""
@@ -231,6 +236,8 @@ def train(args, device):
         num_classes=2,
         pretrained=args.pretrained
     )
+    
+    # IMPORTANT: Move model to device BEFORE creating optimizer
     model = model.to(device)
     
     # Define loss function and optimizer
@@ -243,7 +250,6 @@ def train(args, device):
     # Train the model
     print("Starting training...")
     
-    # Modify train_model to use our save_model function
     best_model_path = os.path.join(model_save_dir, f"{full_model_name}_best.pth")
     best_acc = 0.0
     patience_counter = 0
@@ -260,11 +266,17 @@ def train(args, device):
         total = 0
         
         for inputs, labels in train_loader:
+            # Move inputs and labels to the same device as model
             inputs = inputs.to(device)
             labels = labels.to(device)
             
             # Zero the parameter gradients
             optimizer.zero_grad()
+            
+            # Verify model is on correct device before forward pass
+            if next(model.parameters()).device != device:
+                print(f"Warning: Model not on {device}, moving now")
+                model = model.to(device)
             
             # Forward pass
             with torch.set_grad_enabled(True):
@@ -275,6 +287,11 @@ def train(args, device):
                 # Backward pass and optimize
                 loss.backward()
                 optimizer.step()
+                
+                # Verify model is still on correct device after optimizer step
+                if next(model.parameters()).device != device:
+                    print(f"Warning: Model moved off {device} after optimizer step")
+                    model = model.to(device)
             
             # Statistics
             running_loss += loss.item() * inputs.size(0)
