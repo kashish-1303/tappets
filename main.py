@@ -156,26 +156,6 @@ def encode_data(args):
     
     print("Encoding complete.")
 
-def save_model(model, optimizer, epoch, loss, accuracy, save_path):
-    """Save model with device compatibility"""
-    # Get device of the model
-    device = next(model.parameters()).device
-    
-    # Move model to CPU before saving to avoid MPS-related issues
-    model = model.to('cpu')
-    
-    # Save the model
-    torch.save({
-        'epoch': epoch,
-        'model_state_dict': model.state_dict(),
-        'optimizer_state_dict': optimizer.state_dict(),
-        'loss': loss,
-        'accuracy': accuracy
-    }, save_path)
-    
-    # Move model back to original device
-    model = model.to(device)
-
 def load_model(model_path, model_name, device):
     """Load model with device compatibility"""
     model = create_model(
@@ -199,6 +179,9 @@ def load_model(model_path, model_name, device):
             raise RuntimeError(f"Parameter not on correct device: {param.device} vs expected {device}")
     
     return model, checkpoint
+
+# 1. Fix for main.py - modify the train function to ensure model stays on device
+# Find this section in main.py and replace it with the following:
 
 def train(args, device):
     """Train the model"""
@@ -255,6 +238,9 @@ def train(args, device):
     patience_counter = 0
     history = {'train_loss': [], 'train_acc': [], 'val_loss': [], 'val_acc': []}
     
+    # MPS-specific handling
+    is_mps = device.type == 'mps'
+    
     for epoch in range(args.num_epochs):
         print(f"Epoch {epoch+1}/{args.num_epochs}")
         print('-' * 10)
@@ -275,7 +261,6 @@ def train(args, device):
             
             # Verify model is on correct device before forward pass
             if next(model.parameters()).device != device:
-                print(f"Warning: Model not on {device}, moving now")
                 model = model.to(device)
             
             # Forward pass
@@ -286,11 +271,18 @@ def train(args, device):
                 
                 # Backward pass and optimize
                 loss.backward()
+                
+                # For MPS device, explicitly move optimizer state to device if needed
+                if is_mps:
+                    # This ensures optimizer's internal state remains on the correct device
+                    for param in model.parameters():
+                        if param.grad is not None and param.grad.device != device:
+                            param.grad = param.grad.to(device)
+                
                 optimizer.step()
                 
                 # Verify model is still on correct device after optimizer step
                 if next(model.parameters()).device != device:
-                    print(f"Warning: Model moved off {device} after optimizer step")
                     model = model.to(device)
             
             # Statistics
@@ -306,7 +298,8 @@ def train(args, device):
         history['train_loss'].append(epoch_loss)
         history['train_acc'].append(epoch_acc.item())
         
-        # Validation phase
+        # Validation phase - ensure model is on correct device
+        model = model.to(device)  # Ensure model is on correct device before validation
         val_loss, val_acc, _, _ = validate(model, test_loader, criterion, device)
         
         history['val_loss'].append(val_loss)
@@ -317,14 +310,32 @@ def train(args, device):
         # Update scheduler
         scheduler.step(val_loss)
         
+        # Ensure model is on CPU before saving to avoid MPS-related issues
+        model_cpu = model.to('cpu')
+        
         # Save model checkpoint
         checkpoint_path = os.path.join(model_save_dir, f"{full_model_name}_epoch{epoch+1}.pth")
-        save_model(model, optimizer, epoch, val_loss, val_acc, checkpoint_path)
+        torch.save({
+            'epoch': epoch,
+            'model_state_dict': model_cpu.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'loss': val_loss,
+            'accuracy': val_acc
+        }, checkpoint_path)
+        
+        # Move model back to original device
+        model = model.to(device)
         
         # Check if this is the best model
         if val_acc > best_acc:
             best_acc = val_acc
-            save_model(model, optimizer, epoch, val_loss, val_acc, best_model_path)
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': model_cpu.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'loss': val_loss,
+                'accuracy': val_acc
+            }, best_model_path)
             patience_counter = 0
         else:
             patience_counter += 1
@@ -336,8 +347,10 @@ def train(args, device):
     
     print(f"Best validation accuracy: {best_acc:.4f}")
     
-    # Load best model for evaluation
-    model, _ = load_model(best_model_path, args.model_name, device)
+    # Load best model for evaluation - handle MPS compatibility
+    model_checkpoint = torch.load(best_model_path, map_location='cpu')
+    model.load_state_dict(model_checkpoint['model_state_dict'])
+    model = model.to(device)
     
     # Plot training history
     plt.figure(figsize=(12, 4))
@@ -363,6 +376,29 @@ def train(args, device):
     plt.close()
     
     return model, test_loader, history
+
+# 2. Also replace save_model function with a more MPS-friendly version:
+
+def save_model(model, optimizer, epoch, loss, accuracy, save_path):
+    """Save model with device compatibility for MPS"""
+    # Get device of the model
+    device = next(model.parameters()).device
+    
+    # Move model to CPU before saving to avoid MPS-related issues
+    model_cpu = model.to('cpu')
+    
+    # Save the model
+    torch.save({
+        'epoch': epoch,
+        'model_state_dict': model_cpu.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'loss': loss,
+        'accuracy': accuracy
+    }, save_path)
+    
+    # Move model back to original device
+    model = model.to(device)
+    return model  # Return the model to ensure it's on the right device
 
 def evaluate(args, device, model=None, test_loader=None):
     """Evaluate the model"""
