@@ -291,7 +291,7 @@ def train(args, device):
             total += labels.size(0)
         
         epoch_loss = running_loss / total
-        epoch_acc = running_corrects.double() / total
+        epoch_acc = running_corrects.float() / total
         
         print(f"Train Loss: {epoch_loss:.4f} Acc: {epoch_acc:.4f}")
         
