@@ -11,6 +11,13 @@ import torch.nn as nn
 import torch.optim as optim
 import time
 import platform
+import numpy as np
+import cv2
+import glob
+import os
+from PIL import Image
+import matplotlib.pyplot as plt
+import torchvision.transforms as transforms
 # Import custom modules
 from preprocess_audio import batch_process_audio_files
 from image_encoding import batch_encode_time_series
@@ -156,29 +163,7 @@ def encode_data(args):
     
     print("Encoding complete.")
 
-def load_model(model_path, model_name, device):
-    """Load model with device compatibility"""
-    model = create_model(
-        model_name=model_name,
-        num_classes=2,
-        pretrained=False
-    )
-    
-    # Always load checkpoint to CPU first
-    checkpoint = torch.load(model_path, map_location='cpu')
-    
-    # Load state dict
-    model.load_state_dict(checkpoint['model_state_dict'])
-    
-    # Then move to target device
-    model = model.to(device)
-    
-    # Make sure all buffers and parameters are on the right device
-    for param in model.parameters():
-        if param.device != device:
-            raise RuntimeError(f"Parameter not on correct device: {param.device} vs expected {device}")
-    
-    return model, checkpoint
+
 
 # 1. Fix for main.py - modify the train function to ensure model stays on device
 # Find this section in main.py and replace it with the following:
@@ -400,6 +385,109 @@ def save_model(model, optimizer, epoch, loss, accuracy, save_path):
     model = model.to(device)
     return model  # Return the model to ensure it's on the right device
 
+# To implement these fixes, you need to make the following changes in your main.py file:
+
+# 1. Replace the load_model function with our fixed version
+# Look for this function around line 169 and replace it with:
+
+def load_model(model_path, model_name, device):
+    """Load model with device compatibility for MPS"""
+    # Create the model architecture - always on CPU first
+    model = create_model(
+        model_name=model_name,
+        num_classes=2,
+        pretrained=False
+    )
+    
+    # Load checkpoint to CPU first
+    checkpoint = torch.load(model_path, map_location='cpu')
+    
+    # Load state dict while model is on CPU
+    model.load_state_dict(checkpoint['model_state_dict'])
+    
+    # Then move to target device after loading weights
+    model = model.to(device)
+    
+    # Return model and checkpoint
+    return model, checkpoint
+
+# 2. Replace the visualize function with our MPS-compatible version
+# Look for this function around line 440 and replace it with:
+
+def visualize(args, device, model=None):
+    """Generate GradCAM visualizations"""
+    print("\n=== GradCAM Visualization ===")
+    
+    # Load model if not provided
+    if model is None:
+        # If model_path is not specified, use the default path
+        if args.model_path is None:
+            model_dir = os.path.join(args.model_dir, f"{args.model_name}_{args.encoding_method}")
+            model_path = os.path.join(model_dir, f"{args.model_name}_{args.encoding_method}_best.pth")
+        else:
+            model_path = args.model_path
+        
+        # Load model using our fixed function
+        print(f"Loading model from {model_path}...")
+        model, _ = load_model(model_path, args.model_name, device)
+        
+        # Quick verification
+        print(f"Model loaded successfully and moved to {next(model.parameters()).device}")
+    
+    # Define output directory for visualizations
+    vis_dir = os.path.join(args.vis_dir, f"{args.model_name}_{args.encoding_method}")
+    os.makedirs(vis_dir, exist_ok=True)
+    
+    # Generate GradCAM visualizations for normal samples
+    print("Generating GradCAM visualizations for normal samples...")
+    normal_vis_dir = os.path.join(vis_dir, "normal")
+    os.makedirs(normal_vis_dir, exist_ok=True)
+    
+    # For MPS compatibility in GradCAM - always move to CPU for GradCAM
+    # MPS has limited support for some operations needed by GradCAM
+    if device.type == 'mps':
+        print("Moving model to CPU for GradCAM compatibility")
+        model = model.to('cpu')
+        vis_device = torch.device('cpu')
+    else:
+        vis_device = device
+    
+    try:
+        batch_visualize_grad_cam(
+            model=model,
+            image_dir=args.encoded_normal,
+            output_dir=normal_vis_dir,
+            pattern=f"*_{args.encoding_method}.png",
+            target_layer_name="layer4",
+            show=False,
+            device=vis_device  # Use CPU for visualization
+        )
+        
+        # Generate GradCAM visualizations for anomaly samples
+        print("Generating GradCAM visualizations for anomaly samples...")
+        anomaly_vis_dir = os.path.join(vis_dir, "anomaly")
+        os.makedirs(anomaly_vis_dir, exist_ok=True)
+        
+        batch_visualize_grad_cam(
+            model=model,
+            image_dir=args.encoded_anomaly,
+            output_dir=anomaly_vis_dir,
+            pattern=f"*_{args.encoding_method}.png",
+            target_layer_name="layer4",
+            show=False,
+            device=vis_device  # Use CPU for visualization
+        )
+    finally:
+        # Move model back to original device if needed
+        if device.type == 'mps' and vis_device.type == 'cpu':
+            model = model.to(device)
+            print(f"Model moved back to {device}")
+    
+    print(f"Visualization complete. Results saved to {vis_dir}")
+
+# 3. You also need to make sure your evaluate function is compatible
+# Look for this function around line 385 and make these changes:
+
 def evaluate(args, device, model=None, test_loader=None):
     """Evaluate the model"""
     print("\n=== Model Evaluation ===")
@@ -413,9 +501,10 @@ def evaluate(args, device, model=None, test_loader=None):
         else:
             model_path = args.model_path
         
-        # Load model using our custom function
+        # Load model using our fixed function
         print(f"Loading model from {model_path}...")
         model, _ = load_model(model_path, args.model_name, device)
+        print(f"Model loaded successfully and moved to {next(model.parameters()).device}")
     
     # Create test data loader if not provided
     if test_loader is None:
@@ -457,73 +546,6 @@ def evaluate(args, device, model=None, test_loader=None):
     
     print(f"Evaluation complete. Visualizations saved to {vis_dir}")
     return model
-
-def visualize(args, device, model=None):
-    """Generate GradCAM visualizations"""
-    print("\n=== GradCAM Visualization ===")
-    
-    # Load model if not provided
-    if model is None:
-        # If model_path is not specified, use the default path
-        if args.model_path is None:
-            model_dir = os.path.join(args.model_dir, f"{args.model_name}_{args.encoding_method}")
-            model_path = os.path.join(model_dir, f"{args.model_name}_{args.encoding_method}_best.pth")
-        else:
-            model_path = args.model_path
-        
-        # Load model using our custom function
-        print(f"Loading model from {model_path}...")
-        model, _ = load_model(model_path, args.model_name, device)
-    
-    # Define output directory for visualizations
-    vis_dir = os.path.join(args.vis_dir, f"{args.model_name}_{args.encoding_method}")
-    os.makedirs(vis_dir, exist_ok=True)
-    
-    # Generate GradCAM visualizations for normal samples
-    print("Generating GradCAM visualizations for normal samples...")
-    normal_vis_dir = os.path.join(vis_dir, "normal")
-    os.makedirs(normal_vis_dir, exist_ok=True)
-    
-    # For MPS compatibility in GradCAM - handle case where we need to move to CPU
-    # MPS has limited support for some operations needed by GradCAM
-    original_device = device
-    if device.type == 'mps':
-        # Temporarily move to CPU only for GradCAM if using MPS
-        print("Temporarily moving model to CPU for GradCAM compatibility")
-        model = model.to('cpu')
-        device = torch.device('cpu')
-    
-    try:
-        batch_visualize_grad_cam(
-            model=model,
-            image_dir=args.encoded_normal,
-            output_dir=normal_vis_dir,
-            pattern=f"*_{args.encoding_method}.png",
-            target_layer_name="layer4",
-            show=False,
-            device=device  # Pass device explicitly
-        )
-        
-        # Generate GradCAM visualizations for anomaly samples
-        print("Generating GradCAM visualizations for anomaly samples...")
-        anomaly_vis_dir = os.path.join(vis_dir, "anomaly")
-        os.makedirs(anomaly_vis_dir, exist_ok=True)
-        
-        batch_visualize_grad_cam(
-            model=model,
-            image_dir=args.encoded_anomaly,
-            output_dir=anomaly_vis_dir,
-            pattern=f"*_{args.encoding_method}.png",
-            target_layer_name="layer4",
-            show=False,
-            device=device  # Pass device explicitly
-        )
-    finally:
-        # Move model back to MPS if needed
-        if original_device.type == 'mps':
-            model = model.to(original_device)
-    
-    print(f"Visualization complete. Results saved to {vis_dir}")
 
 def main():
     """Main function"""
