@@ -99,20 +99,22 @@ def get_data_loaders(train_dataset, test_dataset, batch_size=32, num_workers=4):
     Create data loaders from datasets
     
     Args:
-        train_dataset (Dataset): Training dataset
+        train_dataset (Dataset): Training dataset, can be None if only test loader is needed
         test_dataset (Dataset): Test dataset
         batch_size (int): Batch size
         num_workers (int): Number of worker threads for loading data
     
     Returns:
-        tuple: (train_loader, test_loader)
+        tuple: (train_loader, test_loader) - train_loader will be None if train_dataset is None
     """
-    train_loader = DataLoader(
-        train_dataset, 
-        batch_size=batch_size, 
-        shuffle=True, 
-        num_workers=num_workers
-    )
+    train_loader = None
+    if train_dataset is not None:
+        train_loader = DataLoader(
+            train_dataset, 
+            batch_size=batch_size, 
+            shuffle=True, 
+            num_workers=num_workers
+        )
     
     test_loader = DataLoader(
         test_dataset,
