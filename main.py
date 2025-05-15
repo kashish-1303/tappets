@@ -77,20 +77,14 @@ def set_seed(seed):
     """Set random seed for reproducibility"""
     torch.manual_seed(seed)
     np.random.seed(seed)
-    
-    # Set CUDA seeds if available
+
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
-    
-    # MPS doesn't have specific seeding requirements like CUDA
-    # But we do want to ensure PyTorch operations are deterministic when possible
 
 def get_device(gpu, use_mps=False):
-    """Get the device to use"""
-    # Auto-detect Apple Silicon and use MPS if available
     is_apple_silicon = (
         platform.system() == 'Darwin' and 
         platform.machine().startswith('arm')
@@ -163,10 +157,6 @@ def encode_data(args):
     
     print("Encoding complete.")
 
-
-
-# 1. Fix for main.py - modify the train function to ensure model stays on device
-# Find this section in main.py and replace it with the following:
 
 def train(args, device):
     """Train the model"""
@@ -385,11 +375,6 @@ def save_model(model, optimizer, epoch, loss, accuracy, save_path):
     model = model.to(device)
     return model  # Return the model to ensure it's on the right device
 
-# To implement these fixes, you need to make the following changes in your main.py file:
-
-# 1. Replace the load_model function with our fixed version
-# Look for this function around line 169 and replace it with:
-
 def load_model(model_path, model_name, device):
     """Load model with device compatibility for MPS"""
     # Create the model architecture - always on CPU first
@@ -411,8 +396,6 @@ def load_model(model_path, model_name, device):
     # Return model and checkpoint
     return model, checkpoint
 
-# 2. Replace the visualize function with our MPS-compatible version
-# Look for this function around line 440 and replace it with:
 
 def visualize(args, device, model=None):
     """Generate GradCAM visualizations"""
@@ -445,12 +428,10 @@ def visualize(args, device, model=None):
     
     # For MPS compatibility in GradCAM - always move to CPU for GradCAM
     # MPS has limited support for some operations needed by GradCAM
+    original_device = next(model.parameters()).device
     if device.type == 'mps':
         print("Moving model to CPU for GradCAM compatibility")
         model = model.to('cpu')
-        vis_device = torch.device('cpu')
-    else:
-        vis_device = device
     
     try:
         batch_visualize_grad_cam(
@@ -459,8 +440,8 @@ def visualize(args, device, model=None):
             output_dir=normal_vis_dir,
             pattern=f"*_{args.encoding_method}.png",
             target_layer_name="layer4",
-            show=False,
-            device=vis_device  # Use CPU for visualization
+            show=False
+            # Remove the device parameter since it's not accepted
         )
         
         # Generate GradCAM visualizations for anomaly samples
@@ -474,19 +455,16 @@ def visualize(args, device, model=None):
             output_dir=anomaly_vis_dir,
             pattern=f"*_{args.encoding_method}.png",
             target_layer_name="layer4",
-            show=False,
-            device=vis_device  # Use CPU for visualization
+            show=False
+            # Remove the device parameter since it's not accepted
         )
     finally:
         # Move model back to original device if needed
-        if device.type == 'mps' and vis_device.type == 'cpu':
+        if device.type == 'mps' and original_device.type == 'mps':
             model = model.to(device)
             print(f"Model moved back to {device}")
     
     print(f"Visualization complete. Results saved to {vis_dir}")
-
-# 3. You also need to make sure your evaluate function is compatible
-# Look for this function around line 385 and make these changes:
 
 def evaluate(args, device, model=None, test_loader=None):
     """Evaluate the model"""
