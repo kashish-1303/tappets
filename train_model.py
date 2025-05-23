@@ -70,6 +70,9 @@ def train_epoch(model, dataloader, criterion, optimizer, device):
         # Backward pass and optimize
         loss.backward()
         optimizer.step()
+
+        if device.type == 'mps':
+            torch.mps.empty_cache()
         
         batch_size = inputs.size(0)
         running_loss += loss.item() * batch_size
