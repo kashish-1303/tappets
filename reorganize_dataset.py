@@ -4,7 +4,7 @@ from sklearn.model_selection import train_test_split
 
 # Define paths
 current_dir = "fan"  # Path to your current dataset
-output_dir = "rp_images/fan"  # Path to the desired output structure
+output_dir = "data"  # Path to the desired output structure
 
 # Create new directories
 os.makedirs(os.path.join(output_dir, "train", "normal"), exist_ok=True)
