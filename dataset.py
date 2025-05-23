@@ -113,7 +113,7 @@ def get_data_loaders(train_dataset, test_dataset, batch_size=32, num_workers=4):
             train_dataset, 
             batch_size=batch_size, 
             shuffle=True, 
-            num_workers=num_workers
+            num_workers=0
         )
     
     test_loader = DataLoader(
