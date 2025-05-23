@@ -4,21 +4,16 @@ from scipy.fft import fft, ifft
 import matplotlib.pyplot as plt
 import os
 from tqdm import tqdm
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning)
 
 def load_audio(file_path, sr=16000, duration=None):
-    """
-    Load an audio file and return the signal
-    
-    Args:
-        file_path (str): Path to audio file
-        sr (int): Sample rate
-        duration (float): Duration in seconds to load (None for full file)
-    
-    Returns:
-        np.ndarray: Audio signal
-    """
-    y, _ = librosa.load(file_path, sr=sr, duration=duration)
-    return y
+    try:
+        y, _ = librosa.load(file_path, sr=sr, duration=duration, res_type='kaiser_fast')
+        return y
+    except Exception as e:
+        print(f"Error loading {file_path}: {e}")
+        return None
 
 def apply_low_pass_filter(signal, sr=16000, cutoff_freq=4000):
     """
@@ -145,11 +140,27 @@ def batch_process_audio_files(input_dir, output_dir, sr=16000, segment_length=1.
     return total_segments
 
 if __name__ == "__main__":
-    # Example usage
-    input_dir = "path/to/MIMII/dataset/fan/id_00/normal"
-    output_dir = "processed_data/normal"
+    # Process both normal and abnormal data
+    base_input_dir = "data/train"
+    base_output_dir = "processed_data"
     
-    batch_process_audio_files(input_dir, output_dir, 
+    # Process normal data
+    normal_input_dir = os.path.join(base_input_dir, "normal")
+    normal_output_dir = os.path.join(base_output_dir, "normal")
+    
+    print("Processing normal audio files...")
+    batch_process_audio_files(normal_input_dir, normal_output_dir, 
+                             sr=16000, 
+                             segment_length=1.0, 
+                             overlap=0.5,
+                             cutoff_freq=4000)
+    
+    # Process abnormal data
+    abnormal_input_dir = os.path.join(base_input_dir, "abnormal")
+    abnormal_output_dir = os.path.join(base_output_dir, "abnormal")
+    
+    print("Processing abnormal audio files...")
+    batch_process_audio_files(abnormal_input_dir, abnormal_output_dir, 
                              sr=16000, 
                              segment_length=1.0, 
                              overlap=0.5,
