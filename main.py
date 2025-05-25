@@ -1,4 +1,4 @@
-import os
+mport os
 import argparse
 import torch
 import torch.nn as nn
@@ -113,36 +113,47 @@ class AutomatedMIMIIAnomalyDetector:
     
     def step2_encode_images(self):
         """
-        Step 2: Convert time-series to images using four encoding methods
+        Step 2: Convert time-series to images using four encoding methods in separate folders
         """
         print("=" * 60)
         print("STEP 2: ENCODING TIME-SERIES TO IMAGES")
         print("=" * 60)
         
-        # Encode normal segments
-        normal_input = os.path.join(self.config['processed_data_dir'], 'normal')
-        normal_output = os.path.join(self.config['encoded_images_dir'], 'normal')
+        encoding_methods = ['gasf', 'gadf', 'mtf', 'rp']
         
-        print(f"Encoding normal segments from: {normal_input}")
-        batch_encode_time_series(
-            input_dir=normal_input,
-            output_dir=normal_output,
-            image_size=self.config['image_size']
-        )
-        
-        # Encode abnormal segments  
-        abnormal_input = os.path.join(self.config['processed_data_dir'], 'abnormal')
-        abnormal_output = os.path.join(self.config['encoded_images_dir'], 'abnormal')
-        
-        print(f"Encoding abnormal segments from: {abnormal_input}")
-        batch_encode_time_series(
-            input_dir=abnormal_input,
-            output_dir=abnormal_output,
-            image_size=self.config['image_size']
-        )
+        for encoding in encoding_methods:
+            print(f"\nProcessing {encoding.upper()} encoding...")
+            
+            # Create encoding-specific directories
+            encoding_dir = os.path.join(self.config['encoded_images_dir'], encoding)
+            normal_output = os.path.join(encoding_dir, 'normal')
+            abnormal_output = os.path.join(encoding_dir, 'abnormal')
+            
+            os.makedirs(normal_output, exist_ok=True)
+            os.makedirs(abnormal_output, exist_ok=True)
+            
+            # Encode normal segments
+            normal_input = os.path.join(self.config['processed_data_dir'], 'normal')
+            if os.path.exists(normal_input):
+                batch_encode_time_series(
+                    input_dir=normal_input,
+                    output_dir=normal_output,
+                    image_size=self.config['image_size'],
+                    encoding_method=encoding  # Pass specific encoding
+                )
+            
+            # Encode abnormal segments  
+            abnormal_input = os.path.join(self.config['processed_data_dir'], 'abnormal')
+            if os.path.exists(abnormal_input):
+                batch_encode_time_series(
+                    input_dir=abnormal_input,
+                    output_dir=abnormal_output,
+                    image_size=self.config['image_size'],
+                    encoding_method=encoding  # Pass specific encoding
+                )
         
         print("Step 2 completed successfully!")
-    
+        
     def step3_train_single_combination(self, encoding_method, model_name):
         """
         Train a single encoding-model combination
@@ -160,10 +171,10 @@ class AutomatedMIMIIAnomalyDetector:
         
         combination_start_time = datetime.now()
         
-        # Create datasets
-        normal_dir = os.path.join(self.config['encoded_images_dir'], 'normal')
-        abnormal_dir = os.path.join(self.config['encoded_images_dir'], 'abnormal')
-        
+        # Create datasets from encoding-specific folders
+        normal_dir = os.path.join(self.config['encoded_images_dir'], encoding_method, 'normal')
+        abnormal_dir = os.path.join(self.config['encoded_images_dir'], encoding_method, 'abnormal')
+                
         print("Creating datasets...")
         train_dataset, test_dataset = create_dataset_from_directories(
             normal_dir=normal_dir,
@@ -567,34 +578,48 @@ def main():
                        help='Specific models to test (default: all)')
     parser.add_argument('--quick-test', action='store_true',
                        help='Quick test with RP + ResNet50 only')
+    # Add these lines after the existing parser arguments:
+    parser.add_argument('--manual', action='store_true',
+                    help='Manual mode - run individual steps')
+    parser.add_argument('--encoding', type=str, 
+                    choices=['gasf', 'gadf', 'mtf', 'rp'],
+                    help='Single encoding method to train')
+    parser.add_argument('--model', type=str,
+                    choices=['resnet50', 'vgg16', 'densenet121'],
+                    help='Single model to train')
+    parser.add_argument('--step', type=int, choices=[1, 2, 3],
+                    help='Run specific step only (1=preprocess, 2=encode, 3=train)')
     
     args = parser.parse_args()
     
     # Load configuration
     config = load_config(args.config)
-    
-    # Override dataset directory if provided
-    if args.dataset_dir:
-        config['dataset_dir'] = args.dataset_dir
-    
-    # Override encoding methods if provided
-    if args.encodings:
-        config['encoding_methods'] = args.encodings
-    
-    # Override models if provided
-    if args.models:
-        config['model_names'] = args.models
-    
-    # Quick test mode
-    if args.quick_test:
-        config['encoding_methods'] = ['rp']
-        config['model_names'] = ['resnet50']
-        config['epochs'] = 5  # Fewer epochs for quick test
-        print("🚀 Quick test mode: Testing RP + ResNet50 only")
-    
-    # Initialize and run automated detector
-    detector = AutomatedMIMIIAnomalyDetector(config)
-    detector.run_complete_automated_pipeline()
+    if args.manual or args.step or (args.encoding and args.model):
+        detector = AutomatedMIMIIAnomalyDetector(config)
+        
+        if args.step == 1:
+            detector.step1_preprocess_audio()
+        elif args.step == 2:
+            detector.step2_encode_images()
+        elif args.step == 3 or (args.encoding and args.model):
+            if args.encoding and args.model:
+                # Train single combination
+                result = detector.step3_train_single_combination(args.encoding, args.model)
+                # Save individual result
+                result_file = f"{args.encoding}_{args.model}_results.json"
+                result_path = os.path.join(config['results_dir'], result_file)
+                os.makedirs(config['results_dir'], exist_ok=True)
+                with open(result_path, 'w') as f:
+                    json.dump(result, f, indent=2)
+                print(f"Results saved to: {result_path}")
+            else:
+                detector.step3_train_all_combinations()
+        else:
+            print("Manual mode: Use --step 1/2/3 or --encoding + --model")
+    else:
+        # Original automated pipeline
+        detector = AutomatedMIMIIAnomalyDetector(config)
+        detector.run_complete_automated_pipeline()
 
 if __name__ == "__main__":
     main()
