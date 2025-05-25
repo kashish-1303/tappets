@@ -275,9 +275,16 @@ def train_model(model, train_loader, test_loader, criterion, optimizer,
         print(f"Training phase:")
         train_loss = train_epoch(model, train_loader, criterion, optimizer, device)
         
-        # Validate
-        print(f"\nValidation phase:")
-        val_loss, val_acc, val_preds, val_labels = validate(model, test_loader, criterion, device)
+        # Validate every 3 epochs or on the last epoch
+        if (epoch + 1) % 3 == 0 or epoch == num_epochs - 1:
+            print(f"\nValidation phase:")
+            val_loss, val_acc, val_preds, val_labels = validate(model, test_loader, criterion, device)
+        else:
+            print(f"\nSkipping validation (will validate every 3 epochs)")
+            # Use previous validation metrics or set defaults for first epochs
+            if epoch == 0:
+                val_loss, val_acc = train_loss, 0.5
+            # else keep previous val_loss and val_acc values
         
         # Calculate training accuracy
         model.eval()
