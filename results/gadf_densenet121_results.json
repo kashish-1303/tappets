@@ -1,0 +1,11 @@
+{
+  "encoding_method": "gadf",
+  "model_name": "densenet121",
+  "combination": "densenet121_gadf",
+  "status": "failed",
+  "error": "train_model() missing 1 required positional argument: 'criterion'",
+  "accuracy": 0.0,
+  "precision": 0.0,
+  "recall": 0.0,
+  "f1_score": 0.0
+}
