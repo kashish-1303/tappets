@@ -1,0 +1,22 @@
+{
+  "encoding_method": "mtf",
+  "model_name": "densenet121",
+  "combination": "densenet121_mtf",
+  "status": "success",
+  "training_time": "4:00:58.769668",
+  "train_samples": 20334,
+  "test_samples": 6779,
+  "epochs_trained": 6,
+  "best_val_loss": 0.5250179785369579,
+  "best_val_acc": 0.7498156070216846,
+  "final_train_loss": 0.5298125966643237,
+  "final_val_loss": 0.5293416156672432,
+  "final_train_acc": 0.7455985049670503,
+  "final_val_acc": 0.7489305207257707,
+  "accuracy": 0.7489305207257707,
+  "precision": 0.8382352941176471,
+  "recall": 0.12089077412513255,
+  "f1_score": 0.211306765523633,
+  "model_path": "models/densenet121_mtf",
+  "timestamp": "2025-05-26T21:52:43.061120"
+}

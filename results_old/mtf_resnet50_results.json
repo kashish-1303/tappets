@@ -1,0 +1,22 @@
+{
+  "encoding_method": "mtf",
+  "model_name": "resnet50",
+  "combination": "resnet50_mtf",
+  "status": "success",
+  "training_time": "1:49:38.953586",
+  "train_samples": 20334,
+  "test_samples": 6779,
+  "epochs_trained": 6,
+  "best_val_loss": 0.5474413034002906,
+  "best_val_acc": 0.7405222009145892,
+  "final_train_loss": 0.5567634535671816,
+  "final_val_loss": 0.5474413034002906,
+  "final_train_acc": 0.7383200550801613,
+  "final_val_acc": 0.7405222009145892,
+  "accuracy": 0.7405222009145892,
+  "precision": 0.8547486033519553,
+  "recall": 0.08112407211028633,
+  "f1_score": 0.14818401937046005,
+  "model_path": "models/resnet50_mtf",
+  "timestamp": "2025-05-25T20:33:53.263702"
+}

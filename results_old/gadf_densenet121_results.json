@@ -1,0 +1,22 @@
+{
+  "encoding_method": "gadf",
+  "model_name": "densenet121",
+  "combination": "densenet121_gadf",
+  "status": "success",
+  "training_time": "1:54:46.215002",
+  "train_samples": 20334,
+  "test_samples": 6779,
+  "epochs_trained": 6,
+  "best_val_loss": 0.38885207929465604,
+  "best_val_acc": 0.8098539607611742,
+  "final_train_loss": 0.4011264961633146,
+  "final_val_loss": 0.38885207929465604,
+  "final_train_acc": 0.8237434838202026,
+  "final_val_acc": 0.8098539607611742,
+  "accuracy": 0.8098539607611742,
+  "precision": 0.697029702970297,
+  "recall": 0.559915164369035,
+  "f1_score": 0.6209938253454866,
+  "model_path": "models/densenet121_gadf",
+  "timestamp": "2025-05-26T17:51:09.632741"
+}

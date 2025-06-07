@@ -1,0 +1,22 @@
+{
+  "encoding_method": "gadf",
+  "model_name": "resnet50",
+  "combination": "resnet50_gadf",
+  "status": "success",
+  "training_time": "1:46:17.229580",
+  "train_samples": 20334,
+  "test_samples": 6779,
+  "epochs_trained": 6,
+  "best_val_loss": 0.48255410785167896,
+  "best_val_acc": 0.7717952500368785,
+  "final_train_loss": 0.4851760774384772,
+  "final_val_loss": 0.48255410785167896,
+  "final_train_acc": 0.7764827382708763,
+  "final_val_acc": 0.7717952500368785,
+  "accuracy": 0.7717952500368785,
+  "precision": 0.8216318785578748,
+  "recall": 0.2295864262990456,
+  "f1_score": 0.3588893493576461,
+  "model_path": "models/resnet50_gadf",
+  "timestamp": "2025-05-25T18:43:08.923210"
+}

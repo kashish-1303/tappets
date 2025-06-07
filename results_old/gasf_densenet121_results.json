@@ -1,0 +1,22 @@
+{
+  "encoding_method": "gasf",
+  "model_name": "densenet121",
+  "combination": "densenet121_gasf",
+  "status": "success",
+  "training_time": "1:47:00.360281",
+  "train_samples": 20334,
+  "test_samples": 6779,
+  "epochs_trained": 6,
+  "best_val_loss": 0.5184636274029819,
+  "best_val_acc": 0.7567487830063431,
+  "final_train_loss": 0.5140349836174548,
+  "final_val_loss": 0.5184636274029819,
+  "final_train_acc": 0.7575489328218747,
+  "final_val_acc": 0.7567487830063431,
+  "accuracy": 0.7567487830063431,
+  "precision": 0.9647058823529412,
+  "recall": 0.13043478260869565,
+  "f1_score": 0.2297991592713685,
+  "model_path": "models/densenet121_gasf",
+  "timestamp": "2025-05-26T15:55:57.332355"
+}
